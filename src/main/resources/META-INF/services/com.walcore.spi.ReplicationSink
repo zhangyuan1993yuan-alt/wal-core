@@ -1,0 +1,6 @@
+# 内置复制/订阅实现：只有 noop（把记录计数打点，不做任何外部投递）。
+# 故意没有"内置 Kafka/文件投递"实现：复制是使用方的拓扑决定，框架不该猜。
+# 需要真实复制时实现 com.walcore.spi.ReplicationSink 并通过
+#   WalBuilder.replicationSink("<你的插件 id>")
+# 或 META-INF/services 注册（见 README「SPI 扩展指南」）。
+com.walcore.internal.spiimpl.NoopReplicationSink

@@ -1,0 +1,615 @@
+%% ============================================================
+%% WAL 框架 — 类图（主要类 / 关键方法签名 / 关系）
+%% 来源：docs/ARCH-wal.md §12
+%% 渲染：mmdc -i class-diagram.mermaid -o class-diagram.svg
+%% 约定：类名 ASCII；方法形如 +name(params) 返回类型；属性形如 +类型 名称
+%%       为避免渲染器解析歧义，泛型改用裸类型名（List / Optional / Array）
+%% ============================================================
+
+classDiagram
+    direction TB
+
+    %% ===== Public API 层 =====
+    class Wal {
+        <<interface>>
+        +append(int partitionId, ByteBuffer payload, AppendOptions options) long
+        +appendSync(int partitionId, ByteBuffer payload, AppendOptions options) long
+        +appendBatch(int partitionId, List payloads) ArrayLong
+        +flushAndWait(int partitionId, long lsn, long timeoutMillis) boolean
+        +durableLsn(int partitionId) long
+        +cursor(int partitionId, CursorOptions options) WalCursor
+        +tailer(TailerOptions options) WalTailer
+        +addPartition(PartitionOptions options) int
+        +removePartition(int partitionId, RemoveMode mode) void
+        +rotate(int partitionId) void
+        +snapshotStore() SnapshotStore
+        +stats() WalStats
+        +recover(ReplayListener listener) RecoveryReport
+        +verify(VerifyOptions options) VerifyReport
+        +pluginManager() PluginManager
+        +close() void
+        +close(Duration timeout) CloseReport
+    }
+
+    class WalBuilder {
+        +baseDir(Path dir) WalBuilder
+        +partitions(int n) WalBuilder
+        +segmentSizeBytes(long n) WalBuilder
+        +fsyncPolicy(FsyncPolicy p) WalBuilder
+        +batchIntervalMicros(int n) WalBuilder
+        +groupCommitThreads(int n) WalBuilder
+        +codec(String pluginId) WalBuilder
+        +storageBackend(String pluginId) WalBuilder
+        +pluginClassLoader(ClassLoader cl) WalBuilder
+        +build() Wal
+    }
+
+    class WalConfig {
+        +baseDir() Path
+        +partitionCount() int
+        +maxPartitions() int
+        +segmentSizeBytes() long
+        +maxPayloadBytes() int
+        +fsyncPolicy() FsyncPolicy
+        +batchIntervalMicros() int
+        +batchMaxRecords() int
+        +batchMaxBytes() int
+        +groupCommitThreads() int
+        +indexIntervalRecords() int
+        +corruptionPolicy() CorruptionPolicy
+        +recoveryVerifyMode() RecoveryVerifyMode
+        +backpressurePolicy() BackpressurePolicy
+        +tailerOverflowPolicy() TailerOverflowPolicy
+        +onPluginLoadFailure() PluginFailurePolicy
+        +builder() WalBuilder
+    }
+
+    class AppendOptions {
+        +recordType() byte
+        +attributes() long
+        +idempotentKeyHash() long
+        +txnCommit() boolean
+        +defaults() AppendOptions
+    }
+
+    class WalRecord {
+        +lsn() long
+        +timestampNanos() long
+        +partitionId() int
+        +recordType() byte
+        +payload() ByteBuffer
+        +attributes() long
+        +codecId() int
+    }
+
+    class WalRecordVisitor {
+        <<interface>>
+        +accept(WalRecord record) boolean
+    }
+
+    class WalCursor {
+        <<interface>>
+        +partitionId() int
+        +position() long
+        +seekTo(long lsn) boolean
+        +next() WalRecord
+        +nextBatch(int max, WalRecordVisitor visitor) int
+        +close() void
+    }
+
+    class WalTailer {
+        <<interface>>
+        +subscribedFromLsn() long
+        +lagRecords() long
+        +isLive() boolean
+        +close() void
+    }
+
+    class ReplayListener {
+        <<interface>>
+        +onRecord(WalRecord record) void
+        +onProgress(int partitionId, long lsn, long replayed) void
+        +onCorruption(CorruptionEvent event) void
+        +onRecoveryComplete(RecoveryReport report) void
+    }
+
+    class RecoveryReport {
+        +clean() boolean
+        +truncatedBytes() long
+        +recordsReplayed() long
+        +partitions() List
+        +corruptions() List
+        +elapsedMillis() long
+    }
+
+    class WalStats {
+        +health() Health
+        +totalLogBytes() long
+        +activePlugins() Map
+        +offHeapBytes() long
+        +pluginDiagnostics() PluginDiagnostics
+    }
+
+    class WalException {
+        <<abstract>>
+        +errorCode() String
+    }
+
+    %% ===== 写入管线层 =====
+    class AppendPipeline {
+        -registry PartitionRegistry
+        -lsnAllocator LsnAllocator
+        -encoder FrameEncoder
+        -dirtyTracker DirtyTracker
+        -coordinator GroupCommitCoordinator
+        +append(int pid, ByteBuffer payload, AppendOptions opts) long
+        +appendSync(int pid, ByteBuffer payload, AppendOptions opts) long
+        +appendBatch(int pid, List payloads) ArrayLong
+        +checkWritable() void
+    }
+
+    class FrameEncoder {
+        -codec RecordCodec
+        -mem MemoryUtils
+        +encode(SegmentHandle handle, long writePos, long lsn, int pid, ByteBuffer payload, AppendOptions opts) long
+        +headerSize() int
+        +maxFrameSize() int
+        +computeCrc(long addr, int frameLen) int
+    }
+
+    class FrameLayout {
+        <<utility>>
+        +HEADER_LEN int
+        +MAX_FRAME_LEN int
+        +MAX_PAYLOAD_LEN int
+    }
+
+    class LsnAllocator {
+        -next AtomicLong
+        +allocate() long
+        +peek() long
+        +rewind(long lsn) void
+    }
+
+    class DirtyTracker {
+        -dirtyMask AtomicLongArray
+        -dirtyBytes AtomicLong
+        -pendingRecords AtomicLongArray
+        +markDirty(int pid, int bytes) void
+        +drainMask() long
+        +drainBytes() long
+        +pendingRecords(int pid) int
+        +overHighWatermark() boolean
+    }
+
+    class StagingBuffer {
+        -buffer ByteBuffer
+        -writePos int
+        +reserve(int len) int
+        +commit(int len) void
+        +flushedTo(int pos) void
+        +awaitSpace(int len, long timeoutMillis) void
+    }
+
+    %% ===== 组提交层 =====
+    class GroupCommitCoordinator {
+        -tracker DirtyTracker
+        -registry PartitionRegistry
+        -flushers ArrayThread
+        +start() void
+        +requestFlush() void
+        +awaitDurable(int pid, long lsn, long timeoutMillis) void
+        +drainAllAndStop(long timeoutMillis) void
+        +stats() FlushStats
+    }
+
+    class FlushBatch {
+        +mask long
+        +bytes long
+        +maxLsnOf(int pid) long
+        +complete() void
+        +fail(Throwable cause) void
+    }
+
+    class FlushTicket {
+        -done boolean
+        +await(long timeoutMillis) void
+        +signal() void
+    }
+
+    %% ===== 分段存储层 =====
+    class SegmentManager {
+        -backend StorageBackend
+        -registry PartitionRegistry
+        -preparer NextSegmentPreparer
+        +activeSegment(int pid) Segment
+        +findSegmentFor(int pid, long lsn) Segment
+        +rotate(int pid) Segment
+        +segments(int pid) List
+        +freeze(int pid) void
+        +deletePartitionData(int pid) void
+    }
+
+    class Segment {
+        -partitionId int
+        -firstLsn long
+        -finalLength long
+        -publishedWritePos long
+        -durablePos long
+        -state SegmentState
+        -handle SegmentHandle
+        -index SparseIndex
+        +appendFrame(ByteBuffer frame) long
+        +reserve(int frameLen) long
+        +publishPosition(long newPos) void
+        +force(boolean meta) void
+        +sealToReadOnly(long finalLength) void
+        +hasRoom(int frameLen) boolean
+    }
+
+    class SegmentNaming {
+        <<utility>>
+        +walPath(int pid, long firstLsn) Path
+        +idxPath(int pid, long firstLsn) Path
+        +parse(Path p) Optional
+    }
+
+    class SparseIndex {
+        -lsnArr ArrayLong
+        -offArr ArrayLong
+        -count int
+        +append(long lsn, long offset) void
+        +lookup(long lsn) IndexHit
+        +truncateAfter(long lsn) void
+        +size() int
+    }
+
+    class NextSegmentPreparer {
+        -backend StorageBackend
+        -ready ArrayBoolean
+        +warmUp(int pid) void
+        +takeReady(int pid) Segment
+        +run() void
+        +stop() void
+    }
+
+    %% ===== IO 抽象层 =====
+    class StorageBackend {
+        <<interface>>
+        +supportsZeroCopyAppend() boolean
+        +create(int pid, long firstLsn, long size) SegmentHandle
+        +open(Path p, long firstLsn, boolean writable) SegmentHandle
+        +delete(Path p) void
+    }
+
+    class SegmentHandle {
+        <<interface>>
+        +appendPosition() long
+        +append(ByteBuffer frame) void
+        +read(long off, ByteBuffer dst, int len) int
+        +force(boolean meta) void
+        +truncate(long newLength) void
+        +physicalLength() long
+        +isMapped() boolean
+    }
+
+    class MappedStorageBackend
+    class MappedSegmentHandle
+    class FileChannelStorageBackend
+    class FileChannelSegmentHandle
+    class HeapStorageBackend
+    class HeapSegmentHandle
+
+    class MappedWindowCache {
+        -windowCount int
+        -windowBytes long
+        +acquire(int pid, long fileOffset, int len) ByteBuffer
+        +evict(Path path) void
+    }
+
+    class MemoryUtils {
+        <<utility>>
+        +putInt(long addr, int v) void
+        +putLong(long addr, long v) void
+        +getInt(long addr) int
+        +getLong(long addr) long
+        +memcpy(long dst, long src, int len) void
+        +unmap(ByteBuffer buf) boolean
+    }
+
+    %% ===== 读取层 =====
+    class CursorImpl {
+        -segmentManager SegmentManager
+        -current Segment
+        -readOffset long
+        -nextLsnWanted long
+        -checkpoint CursorCheckpointStore
+        +seekTo(long lsn) boolean
+        +next() WalRecord
+        +nextBatch(int max, WalRecordVisitor v) int
+    }
+
+    class TailerImpl {
+        -lsnRing ArrayLong
+        -head int
+        -tail int
+        -handler TailHandler
+        +lagRecords() long
+        +run() void
+        +wakeup() void
+    }
+
+    class FrameDecoder {
+        -codec RecordCodec
+        +decode(SegmentHandle h, long offset, ByteBuffer dst) DecodedFrame
+        +validateHeaderCondition(ByteBuffer hdr) boolean
+    }
+
+    class CursorCheckpointStore {
+        +persist(int pid, long lsn) void
+        +restore(int pid) long
+    }
+
+    %% ===== 恢复层 =====
+    class RecoveryManager {
+        -backend StorageBackend
+        -policy CorruptionPolicy
+        +recover(ReplayListener listener) RecoveryReport
+        -scanAndRepair(int pid) long
+        -rebuildIndexes(int pid) void
+    }
+
+    class SegmentScanner {
+        +scan(SegmentHandle h, long fromOffset, long fileLength, FrameVisitor v) ScanResult
+    }
+
+    class TornWriteDetector {
+        +inspect(ByteBuffer header, long offset, long fileLength) Verdict
+        +crcMatches(ByteBuffer frame, int frameLen) boolean
+    }
+
+    class IndexRebuilder {
+        +rebuild(int pid, SegmentHandle h, SparseIndex idx, int interval) void
+    }
+
+    %% ===== 分区层 =====
+    class PartitionImpl {
+        -id int
+        -writeLock ReentrantLock
+        -publishedLsn long
+        -durableLsn long
+        -state PartitionState
+        -active Segment
+        +nextLsnAndLock() long
+        +publishLsn(long lsn) void
+        +publishDurableLsn(long lsn) void
+        +isWritable() boolean
+    }
+
+    class PartitionRegistry {
+        -slots ArrayPartition
+        +get(int pid) PartitionImpl
+        +register(PartitionImpl p) void
+        +unregister(int pid) void
+        +activeIds() ArrayInt
+        +activeCount() int
+    }
+
+    %% ===== SPI 插件层 =====
+    class WalPlugin {
+        <<interface>>
+        +id() String
+        +apiVersion() int
+        +init(PluginContext ctx) void
+        +close() void
+    }
+
+    class PluginContext {
+        <<interface>>
+        +config() WalConfig
+        +partitionCount() int
+        +metrics() MetricsRegistry
+        +pluginClassLoader() ClassLoader
+        +baseDir() Path
+        +warn(String code, String message, Throwable cause) void
+    }
+
+    class RecordCodec {
+        <<interface>>
+        +codecId() int
+        +encode(ByteBuffer src, int srcOffset, int srcLen, ByteBuffer dst, int dstOffset, int dstCapacity) int
+        +decode(ByteBuffer src, int srcOffset, int storedLen, int logicalLen, ByteBuffer dst, int dstOffset) int
+        +maxStoredSize(int logicalLen) int
+    }
+
+    class IndexStore {
+        <<interface>>
+        +openSegment(int pid, long firstLsn, long capacity) void
+        +append(long lsn, long offset) void
+        +lookup(long lsn) IndexHit
+        +rebuild(Iterator src) void
+        +memoryBytes() long
+        +closeSegment(long firstLsn) void
+    }
+
+    class RetentionPolicy {
+        <<interface>>
+        +evaluate(RetentionContext ctx) RetentionDecision
+        +onSegmentDeleted(SegmentInfo info) void
+    }
+
+    class ReplicationSink {
+        <<interface>>
+        +mode() Mode
+        +onPartitionAdded(int pid, long firstLsn) void
+        +onPartitionRemoved(int pid, long lastLsn) void
+        +onRecord(WalRecordView record) void
+        +replicatedLsn(int pid) long
+    }
+
+    class SnapshotStore {
+        <<interface>>
+        +write(int pid, long uptoLsn, InputStream st, long size) SnapshotMeta
+        +latest(int pid) Optional
+        +list(int pid) List
+        +open(SnapshotMeta meta) InputStream
+        +deleteBefore(int pid, long uptoLsn) void
+        +pinnedLsn(int pid) long
+    }
+
+    class RawRecordCodec
+    class DefaultIndexStore
+    class NoopReplicationSink
+    class TimeSizeRetentionPolicy
+    class FileSnapshotStore
+
+    class PluginManager {
+        +scan() PluginDiagnostics
+        +list(PluginType t) List
+        +installJar(Path jar) PluginHandle
+        +uninstallJar(Path jar) void
+        +swap(PluginType t, String id, SwapPolicy p) SwapResult
+        +current() PluginSet
+    }
+
+    class PluginClassLoader
+    class PluginDiagnostics {
+        +loadedIds() List
+        +failedPlugins() List
+        +incompatiblePlugins() List
+        +duplicateIds() List
+    }
+
+    %% ===== 保留 / 快照 =====
+    class RetentionManager {
+        -policy RetentionPolicy
+        +evaluateAll() void
+        +deleteSafely(SegmentInfo info) boolean
+    }
+
+    class CheckpointManager {
+        -snapshotStore SnapshotStore
+        -retention RetentionManager
+        +checkpoint(int pid, long uptoLsn, InputStream state, long size) SnapshotMeta
+        +truncateBefore(int pid) void
+    }
+
+    %% ===== 指标层 =====
+    class MetricsRegistry {
+        +counter(String name) Counter
+        +histogram(String name, ArrayLong boundsNanos) LatencyHistogram
+        +registerSink(MeterSink sink) void
+    }
+
+    class LatencyHistogram {
+        +record(long valueNanos) void
+        +p50() long
+        +p99() long
+        +p999() long
+    }
+
+    class MeterSink {
+        <<interface>>
+        +onCounter(String name, long value, Map tags) void
+        +onHistogram(String name, ArrayLong buckets, Map tags) void
+    }
+
+    %% ===== 实现关系 =====
+    Wal <|.. DefaultWal
+    WalBuilder ..> WalConfig : creates
+    WalConfig ..> WalBuilder : builds
+
+    RecordCodec --|> WalPlugin
+    StorageBackend --|> WalPlugin
+    IndexStore --|> WalPlugin
+    RetentionPolicy --|> WalPlugin
+    ReplicationSink --|> WalPlugin
+    SnapshotStore --|> WalPlugin
+
+    StorageBackend <|.. MappedStorageBackend
+    StorageBackend <|.. FileChannelStorageBackend
+    StorageBackend <|.. HeapStorageBackend
+    SegmentHandle <|.. MappedSegmentHandle
+    SegmentHandle <|.. FileChannelSegmentHandle
+    SegmentHandle <|.. HeapSegmentHandle
+
+    RecordCodec <|.. RawRecordCodec
+    IndexStore <|.. DefaultIndexStore
+    ReplicationSink <|.. NoopReplicationSink
+    RetentionPolicy <|.. TimeSizeRetentionPolicy
+    SnapshotStore <|.. FileSnapshotStore
+    WalCursor <|.. CursorImpl
+    WalTailer <|.. TailerImpl
+    MeterSink <|.. NoopMeterSink
+
+    %% ===== 组合 / 依赖 =====
+    Wal --> AppendPipeline
+    Wal --> SegmentManager
+    Wal --> RecoveryManager
+    Wal --> PluginManager
+    Wal --> SnapshotStore
+    Wal --> MetricsRegistry
+
+    AppendPipeline --> LsnAllocator
+    AppendPipeline --> FrameEncoder
+    AppendPipeline --> DirtyTracker
+    AppendPipeline --> PartitionRegistry
+    AppendPipeline --> SegmentManager
+    AppendPipeline --> GroupCommitCoordinator
+
+    FrameEncoder --> FrameLayout
+    FrameEncoder --> RecordCodec
+    FrameEncoder --> MemoryUtils
+    FrameEncoder --> StagingBuffer
+
+    GroupCommitCoordinator --> DirtyTracker
+    GroupCommitCoordinator --> PartitionRegistry
+    GroupCommitCoordinator --> FlushBatch
+    FlushBatch --> FlushTicket
+
+    SegmentManager --> StorageBackend
+    SegmentManager --> NextSegmentPreparer
+    SegmentManager --> Segment
+    SegmentManager --> SegmentNaming
+    Segment --> SegmentHandle
+    Segment --> SparseIndex
+    SparseIndex ..|> IndexStore
+    MappedStorageBackend --> MappedWindowCache
+    MappedStorageBackend --> MappedSegmentHandle
+    FileChannelStorageBackend --> FileChannelSegmentHandle
+    HeapStorageBackend --> HeapSegmentHandle
+    MappedSegmentHandle --> MemoryUtils
+
+    CursorImpl --> SegmentManager
+    CursorImpl --> FrameDecoder
+    CursorImpl --> CursorCheckpointStore
+    FrameDecoder --> RecordCodec
+    TailerImpl --> SegmentManager
+    TailerImpl --> FrameDecoder
+
+    RecoveryManager --> SegmentScanner
+    RecoveryManager --> TornWriteDetector
+    RecoveryManager --> IndexRebuilder
+    IndexRebuilder --> SparseIndex
+
+    PartitionRegistry --> PartitionImpl
+    PartitionImpl --> Segment
+
+    PluginManager --> PluginClassLoader
+    PluginManager --> PluginDiagnostics
+    PluginManager --> PluginContext
+    PluginManager --> RecordCodec
+    PluginManager --> IndexStore
+    PluginManager --> RetentionPolicy
+    PluginManager --> ReplicationSink
+
+    RetentionManager --> RetentionPolicy
+    CheckpointManager --> SnapshotStore
+    CheckpointManager --> RetentionManager
+
+    MetricsRegistry --> LatencyHistogram
+    MetricsRegistry --> MeterSink
+
+    Wal ..> RecoveryReport
+    Wal ..> WalStats
+    Wal ..> CloseReport

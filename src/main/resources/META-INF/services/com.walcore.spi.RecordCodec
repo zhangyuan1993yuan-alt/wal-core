@@ -1,0 +1,3 @@
+# 内置记录编码器：RAW（恒等映射，零依赖、零开销）
+# 使用方可用 WalBuilder.codec("<自己的插件 id>") 覆盖，无需修改本文件。
+com.walcore.internal.spiimpl.RawRecordCodec

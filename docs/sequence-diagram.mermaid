@@ -1,0 +1,54 @@
+%% ============================================================
+%% WAL 框架 — 关键路径时序图（追加写入 + 组提交 + 返回）
+%% 来源：docs/ARCH-wal.md §13.1
+%% 渲染：mmdc -i sequence-diagram.mermaid -o sequence-diagram.svg
+%% 约定：节点 ID 全部 ASCII，标签中文
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    participant C as 撮合写入线程
+    participant A as AppendPipeline
+    participant L as LsnAllocator
+    participant E as FrameEncoder
+    participant H as 活跃Segment<br/>(mmap page cache)
+    participant T as DirtyTracker
+    participant G as GroupCommit线程
+    participant K as NVMe SSD
+
+    C->>A: append(pid=3, payload=256B, opts)
+    Note right of C: t0 = 0us
+    A->>A: state==RUNNING 检查 + 背压检查
+    A->>A: partition.writeLock.lock()<br/>t0+0.03us
+    A->>L: getAndIncrement()
+    L-->>A: lsn = 1048577<br/>t0+0.05us / p99 0.20us
+    A->>E: encode(lsn, pid, payload)
+    E->>H: 写 64B 帧头（magic/version/len/lsn/ts/pid）<br/>t0+0.07us
+    E->>H: memcpy payload 256B 到 page cache<br/>t0+0.08us
+    E->>E: CRC32C(320B) via SSE4.2<br/>t0+0.43us / p99 0.75us
+    E->>H: 回填 crc32c 与 frameLen
+    A->>H: publishedWritePos.storeRelease(end)<br/>t0+0.45us
+    A->>T: markDirty(3, 328) + pendingRecords++
+    alt pendingRecords >= batchMaxRecords(4096)
+        A->>G: LockSupport.unpark(flusher)
+    end
+    A->>A: writeLock.unlock()
+    A-->>C: return lsn = 1048577<br/>t0+约0.50us / p50 0.6us / p99 1.6us
+    Note over C: 【P0-01 指标达成：p50 <= 5us，p99 <= 100us】
+
+    Note right of G: 若需持久确认，ACK 前调用 flushAndWait
+    C->>G: flushAndWait(pid=3, lsn=1048577, 5000ms)
+    alt durableLsn(3) >= 1048577
+        G-->>C: 立即返回 true（快路径，0 系统调用）
+    else 未持久
+        G->>G: FlushTicket.register(pid=3, lsn)
+        G->>G: parkNanos 至 batchIntervalMicros=200us
+        G->>T: mask = drainMask(); bytes = drainBytes()
+        G->>H: force(false) 触发 fdatasync 分区 3 的段
+        H->>K: fdatasync（该批全部脏字节）
+        K-->>H: 完成 t0+约0.45~1.6ms
+        G->>H: 对 mask 中其余分区依次 force(false)<br/>（设备层并行，串行提交）
+        K-->>G: 全部完成
+        G->>G: 各分区 publishDurableLsn(batchMaxLsn)
+        G-->>C: ticket.signal() 返回 true
+    end

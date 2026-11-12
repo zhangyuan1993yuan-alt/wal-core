@@ -1,0 +1,4 @@
+com.walcore.plugin.fixtures.PassThroughCodec
+com.walcore.plugin.fixtures.HighPriorityCodec
+com.walcore.plugin.fixtures.IncompatibleCodec
+com.walcore.plugin.fixtures.BrokenInitCodec

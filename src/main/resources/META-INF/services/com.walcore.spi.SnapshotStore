@@ -1,0 +1,2 @@
+# 内置快照存储：64B 定长头 + 内容的自描述单文件（SHA-256 校验 + 原子替换）
+com.walcore.internal.snapshot.FileSnapshotStore

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.walcore</groupId>
+  <artifactId>wal-core</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>wal-core</name>
+  <description>通用高并发 WAL（预写日志）框架：嵌入式 Java 库，核心零第三方运行时依赖</description>
+
+  <!--
+    硬约束：核心库零第三方运行时依赖。
+    `mvn dependency:tree -Dscope=compile` 必须输出为空，因此这里除 junit-jupiter(test) 外
+    不允许出现任何 <dependency>。
+  -->
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <!--
+      性能用例分组（TASKS T18）。
+      默认 `mvn -o test` 排除 @Tag("perf")：这些用例断言的是"吞吐/延迟/开销百分比"这类
+      与机器强相关的绝对数值，在共享 CI 或 Windows 开发机上会随机失败，
+      一旦随机失败，团队就会开始忽略红灯——比不跑更糟。
+      想跑它们：`mvn -o test -Dtest.excludedGroups= -Dgroups=perf`。
+    -->
+    <test.excludedGroups>perf</test.excludedGroups>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.5</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!--
+        compiler：release=17（Maven 运行时 JAVA_HOME 为 JDK 17，不能用 JDK 21 语言特性）。
+
+        主代码用 `-Xlint:all -Werror`：把"告警"升级成"编译错误"，让 `mvn -o compile`
+        本身就成为一道质量门（TASKS T01 ① + D2）。主代码目前零告警，门必须一直关得住。
+        <p>测试代码只加 `-Xlint:all` 而不加 `-Werror`：测试里允许出现
+        "unused variable / deprecation" 这类不影响正确性的告警，
+        若也 -Werror 会让"为了验证一个边界而故意留一个未用变量"的写法没法写。
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <!--
+          两个编译执行分开配：主代码 -Werror，测试代码只要 -Xlint:all。
+          不能用全局 <compilerArgs> + <testCompilerArgs> 的写法——
+          maven-compiler-plugin 3.13.0 没有 testCompilerArgs 这个参数（会打印
+          "Parameter 'testCompilerArgs' is unknown"），只能按 execution 覆盖。
+        -->
+        <executions>
+          <execution>
+            <id>default-compile</id>
+            <configuration>
+              <compilerArgs>
+                <arg>-Xlint:all</arg>
+                <arg>-Werror</arg>
+              </compilerArgs>
+            </configuration>
+          </execution>
+          <execution>
+            <id>default-testCompile</id>
+            <configuration>
+              <compilerArgs>
+                <arg>-Xlint:all</arg>
+              </compilerArgs>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- surefire 3.2.5：跑 JUnit 5 单测 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+        <configuration>
+          <trimStackTrace>false</trimStackTrace>
+          <argLine>-Xmx1g</argLine>
+          <!-- 默认排除 perf 组；用 -Dtest.excludedGroups= 清空并 -Dgroups=perf 只跑 perf -->
+          <excludedGroups>${test.excludedGroups}</excludedGroups>
+        </configuration>
+      </plugin>
+      <!--
+        关于集成/基准用例（T19 的 *IT.java）：<b>刻意不引入 maven-failsafe-plugin</b>。
+        原因：本项目的硬约束之一是"离线可构建"，而 failsafe 在离线仓库里未必存在
+        （实测 `mvn -o` 会因 plugin 解析失败让整个构建红灯）。*IT.java 的命名本身就
+        不会被 surefire 默认 include（默认只匹配 *Test/Test*/*Tests/*TestCase），
+        所以默认 `mvn -o test` 天然跳过它们；要跑就用：
+          mvn -o test -Dtest='*IT' -Dtest.excludedGroups= -Dgroups=perf
+        这个做法零额外插件、零网络依赖，代价只是不享受 failsafe 的"失败也产出报告"。
+      -->
+    </plugins>
+  </build>
+</project>

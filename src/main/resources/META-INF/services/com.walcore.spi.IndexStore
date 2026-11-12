@@ -1,0 +1,2 @@
+# 内置稀疏索引：每个段一个 .idx（long[] 二分，堆内预算超限时降级为文件二分）
+com.walcore.internal.spiimpl.DefaultIndexStore

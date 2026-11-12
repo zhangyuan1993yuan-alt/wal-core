@@ -1,0 +1,2 @@
+# 内置保留策略：时间 + 大小双维度（取并集），硬保护 minPinnedLsn 与最后一个段
+com.walcore.internal.spiimpl.TimeSizeRetentionPolicy

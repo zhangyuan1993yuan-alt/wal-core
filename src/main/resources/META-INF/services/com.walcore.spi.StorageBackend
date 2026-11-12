@@ -1,0 +1,7 @@
+# 内置三种存储后端。默认按平台选择：
+#   Linux x86_64 -> builtin:storage-mmap（mmap 写活跃段 + 窗口化读只读段）
+#   其他平台      -> builtin:storage-fc  （FileChannel + staging 批量写）
+# 可用 WalBuilder.storageBackend("builtin:storage-heap") 强制内存后端（仅测试/演示）。
+com.walcore.internal.io.MappedStorageBackend
+com.walcore.internal.io.FileChannelStorageBackend
+com.walcore.internal.io.HeapStorageBackend

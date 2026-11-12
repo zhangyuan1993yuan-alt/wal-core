@@ -1,0 +1,2 @@
+com.walcore.examples.spi.CountingCodec
+com.walcore.examples.spi.Rot13Codec
