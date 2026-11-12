@@ -20,11 +20,13 @@
 - `.workbuddy/memory/` — 4 个文件：`MEMORY.md`（长期笔记）+ `2026-11-10/11/12.md`（按日日志）
 - `HANDOFF.md` — 本文件
 
+**另一个仓库（同样 Private，需单独 clone）**
+- `wal-core-demo` → https://github.com/zhangyuan1993yuan-alt/wal-core-demo ：Disruptor + WAL 分片撮合 Demo，11 个文件 / 38KB（8 个 Java 源 + README + pom + `.gitignore`），首次提交 `12dbf19`。运行期 `match-demo-data/`（约 3.1GB WAL 段）与 `target/` 已由 `.gitignore` 根锚定规则排除，clone 后首次运行自动重建。
+
 **仓库外（clone 拿不到，需单独带走）**
 
 | 资产 | 旧环境位置 | 说明 |
 |---|---|---|
-| `wal-demo` | `../wal-demo` | Disruptor + WAL 分片完整 Demo，独立 Maven 项目。目录含运行期 `match-demo-data/` 与 `target/`（合计约 3.1GB），归档/入库前必须排除 |
 | 版本快照 | `../_backups/wal/` | 改前/改后 tar、`wal-core-1.0.0.jar`、SHA256SUMS、`BACKUPS.md` 索引 |
 | 推送备用脚本 | `../_tools/gh_datapi_push.py` | `github.com` 不可达时走 Git Data API 的备用通道 |
 | MCP 配置 | `J:\WiWork\_config\mcp.json` | github-pat 令牌真身；`~\.workbuddy\mcp.json` 是指向它的符号链接 |
@@ -36,7 +38,7 @@
 3. 环境：JDK 17 + Maven。本地仓库已有 junit 时 `mvn -o clean install`，否则联网跑 `mvn clean install`；期望 **433/433 通过**。
 4. 性能验收只在 **Linux NVMe 独占机**做，命令见 `docs/PERF-wal.md` §2；Windows 数字（`docs/PERF-devbox.md`）只是本机快照，不作验收证据。
 5. 需要 GitHub 写权限时：PAT 存入系统凭据管理器 + 按需配置代理，细节见 `MEMORY.md`「版本控制与推送」。
-6. 要用 Demo：单独拷 `wal-demo/`，并确认其 `pom.xml` 中 `wal-core` 版本对齐 `1.0.0`。
+6. 要用 Demo：`git clone https://github.com/zhangyuan1993yuan-alt/wal-core-demo.git`（Private）。先按第 3 步把 `wal-core` 装进本地 Maven 仓库（Demo 依赖坐标 `com.walcore:wal-core:1.0.0`），再按其 README「运行」章节执行；目录名以实际 clone 结果为准。
 
 ## 4. 旧环境信息不要照搬
 
