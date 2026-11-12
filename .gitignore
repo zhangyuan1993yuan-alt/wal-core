@@ -35,5 +35,7 @@ Thumbs.db
 *.log
 hs_err_pid*.log
 
-# AI 工具工作数据（会话记忆/日志，非交付物）
-.workbuddy/
+# AI 工具工作数据：会话记忆随仓库走（换环境 clone 后自动就位），其余不入库
+# 规则必须根锚定；改完用 git ls-files --others --ignored --exclude-standard 复核
+/.workbuddy/*
+!/.workbuddy/memory/
