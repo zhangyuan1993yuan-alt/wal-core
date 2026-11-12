@@ -19,6 +19,8 @@
 - `src/` 177 个源文件、`pom.xml`、`README.md`、`docs/` 下的设计与性能文档
 - `.workbuddy/memory/` — 4 个文件：`MEMORY.md`（长期笔记）+ `2026-11-10/11/12.md`（按日日志）
 - `HANDOFF.md` — 本文件
+- `archive/` — v1.0.0 锁定前后的 5 个备份文件（改前/改后源码 tar、发布 jar、SHA256SUMS、`BACKUPS.md`），说明见 `archive/README.md`
+- `tools/gh_datapi_push.py` — `github.com` 不可达时走 Git Data API 的备用推送脚本（仅支持单个 root commit）
 
 **另一个仓库（同样 Private，需单独 clone）**
 - `wal-core-demo` → https://github.com/zhangyuan1993yuan-alt/wal-core-demo ：Disruptor + WAL 分片撮合 Demo，11 个文件 / 38KB（8 个 Java 源 + README + pom + `.gitignore`），首次提交 `12dbf19`。运行期 `match-demo-data/`（约 3.1GB WAL 段）与 `target/` 已由 `.gitignore` 根锚定规则排除，clone 后首次运行自动重建。
@@ -27,8 +29,6 @@
 
 | 资产 | 旧环境位置 | 说明 |
 |---|---|---|
-| 版本快照 | `../_backups/wal/` | 改前/改后 tar、`wal-core-1.0.0.jar`、SHA256SUMS、`BACKUPS.md` 索引 |
-| 推送备用脚本 | `../_tools/gh_datapi_push.py` | `github.com` 不可达时走 Git Data API 的备用通道 |
 | MCP 配置 | `J:\WiWork\_config\mcp.json` | github-pat 令牌真身；`~\.workbuddy\mcp.json` 是指向它的符号链接 |
 
 ## 3. 新机器恢复清单
@@ -61,7 +61,7 @@
 - 每次完成实质工作后，**追加**当日 `.workbuddy/memory/YYYY-MM-DD.md`（append-only，不要覆盖），并**随代码一起提交**。只写在本地不提交 = 换环境仍然丢。
 - 日志满 30 天，按主题蒸馏进 `MEMORY.md`，再删旧日志。
 - 改 `.gitignore` 前先读 `MEMORY.md` 的「版本控制与推送」：运行期目录规则**必须根锚定**；改完用 `git ls-files --others --ignored --exclude-standard` 复核（历史上一条裸 `plugin/` 误伤了 12 个 Java 源文件）。
-- 敏感信息：本仓库是 **Private**，记忆里含本机路径、内网 IP、账号名（不含令牌/密码）。若将来转 Public，先清理 `.workbuddy/memory/` 再改可见性。
+- 敏感信息：本仓库是 **Private**，记忆里含本机路径、内网 IP、账号名（不含令牌/密码）；`archive/` 的两个 tar 还封存了 3 个旧版记忆文件、`BACKUPS.md` 含旧环境绝对路径。若将来转 Public，先清理 `.workbuddy/memory/` 与 `archive/` 再改可见性。
 
 ## 7. 给新会话的第一句话
 

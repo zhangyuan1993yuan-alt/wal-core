@@ -39,3 +39,6 @@ hs_err_pid*.log
 # 规则必须根锚定；改完用 git ls-files --others --ignored --exclude-standard 复核
 /.workbuddy/*
 !/.workbuddy/memory/
+
+# 归档制品白名单：上面的 *.jar 规则会误伤随仓库分发的发布 jar
+!/archive/*.jar
